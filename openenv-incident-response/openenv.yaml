@@ -1,0 +1,255 @@
+# OpenEnv Configuration for DevOps Incident Response Environment
+# This file defines the environment metadata and task configurations
+
+name: devops-incident-response
+version: "1.0.0"
+description: |
+  An AI training environment for production incident response in microservices architectures.
+  Agents must diagnose and resolve realistic production incidents by analyzing logs, metrics,
+  and alerts, then taking appropriate remediation actions.
+
+author: OpenEnv Hackathon Team
+license: MIT
+repository: https://huggingface.co/spaces/openenv/devops-incident-response
+
+# Environment type
+type: step-based
+episode_type: finite
+
+# API endpoints
+api:
+  version: "1.0"
+  endpoints:
+    reset: /reset
+    step: /step
+    state: /state
+    grade: /grade
+    health: /health
+    tasks: /tasks
+
+# Model definitions
+models:
+  observation:
+    type: object
+    description: "Current state of the incident and infrastructure"
+    schema: src.models.Observation
+
+  action:
+    type: object
+    description: "An action the agent can take"
+    schema: src.models.Action
+
+  reward:
+    type: object
+    description: "Reward signal with breakdown"
+    schema: src.models.Reward
+
+# Action space
+action_space:
+  type: discrete
+  actions:
+    - name: query_service
+      description: "Get status and info for a service"
+      parameters:
+        - name: service
+          type: string
+          required: true
+
+    - name: read_logs
+      description: "Read recent logs from a service"
+      parameters:
+        - name: service
+          type: string
+          required: true
+        - name: log_lines
+          type: integer
+          default: 20
+
+    - name: get_metrics
+      description: "Get current metrics for a service"
+      parameters:
+        - name: service
+          type: string
+          required: true
+
+    - name: get_alerts
+      description: "Get active monitoring alerts"
+      parameters: []
+
+    - name: restart_service
+      description: "Restart a service"
+      parameters:
+        - name: service
+          type: string
+          required: true
+
+    - name: scale_service
+      description: "Scale a service to specified replicas"
+      parameters:
+        - name: service
+          type: string
+          required: true
+        - name: scale_replicas
+          type: integer
+          required: true
+
+    - name: rollback_service
+      description: "Rollback a service to previous version"
+      parameters:
+        - name: service
+          type: string
+          required: true
+
+    - name: update_config
+      description: "Update a service configuration"
+      parameters:
+        - name: service
+          type: string
+          required: true
+        - name: config_key
+          type: string
+          required: true
+        - name: config_value
+          type: any
+          required: true
+
+    - name: run_diagnostic
+      description: "Run diagnostic checks on a service"
+      parameters:
+        - name: service
+          type: string
+          required: true
+
+    - name: resolve_incident
+      description: "Mark the incident as resolved"
+      parameters: []
+
+# Observation space
+observation_space:
+  type: object
+  properties:
+    incident:
+      type: object
+      description: "Current incident information"
+    step:
+      type: integer
+      description: "Current step number"
+    visible_services:
+      type: object
+      description: "Information about queried services"
+    visible_logs:
+      type: array
+      description: "Log entries from queried services"
+    visible_metrics:
+      type: object
+      description: "Metrics from queried services"
+    visible_alerts:
+      type: array
+      description: "Active monitoring alerts"
+    last_action:
+      type: string
+      description: "The last action taken"
+    last_action_result:
+      type: object
+      description: "Result of the last action"
+    available_services:
+      type: array
+      description: "List of all services in the infrastructure"
+
+# Task definitions
+tasks:
+  - id: task_easy_oom
+    name: "Memory Crisis: OOM Kill Resolution"
+    difficulty: easy
+    description: |
+      The order-service has been OOM killed during a traffic spike.
+      Identify the root cause and restore service health.
+    max_steps: 15
+    time_limit_seconds: 300
+    grader:
+      type: programmatic
+      module: src.graders
+      function: grade_task
+    metrics:
+      diagnosis_weight: 0.3
+      remediation_weight: 0.6
+      efficiency_weight: 0.1
+
+  - id: task_medium_cascade
+    name: "Database Overload: Cascading Connection Failure"
+    difficulty: medium
+    description: |
+      Multiple services are experiencing database connection timeouts.
+      Identify the root cause and fix all affected services.
+    max_steps: 25
+    time_limit_seconds: 600
+    grader:
+      type: programmatic
+      module: src.graders
+      function: grade_task
+    metrics:
+      diagnosis_weight: 0.35
+      remediation_weight: 0.55
+      efficiency_weight: 0.1
+
+  - id: task_hard_complex
+    name: "Perfect Storm: Multi-Factor Cascading Incident"
+    difficulty: hard
+    description: |
+      Multiple alerts firing with several services affected.
+      This incident has multiple root causes that must all be addressed.
+    max_steps: 40
+    time_limit_seconds: 900
+    grader:
+      type: programmatic
+      module: src.graders
+      function: grade_task
+    metrics:
+      diagnosis_weight: 0.4
+      remediation_weight: 0.45
+      efficiency_weight: 0.15
+
+# Reward configuration
+reward:
+  type: shaped
+  range: [-1.0, 1.0]
+  shaping:
+    diagnostic_actions: 0.02
+    correct_remediation: 0.1
+    successful_resolution: 0.3
+    efficiency_bonus: 0.1
+  penalties:
+    unnecessary_actions: -0.01
+    harmful_actions: -0.05
+    time_pressure: -0.01
+
+# Termination conditions
+termination:
+  conditions:
+    - type: max_steps
+      description: "Episode ends when max steps reached"
+    - type: successful_resolution
+      description: "Episode ends when incident is resolved"
+
+# Tags for discoverability
+tags:
+  - devops
+  - incident-response
+  - sre
+  - microservices
+  - production
+  - real-world
+  - openenv
+
+# Hardware requirements
+requirements:
+  vcpu: 2
+  memory_gb: 8
+  runtime_minutes: 20
+
+# Validation
+validation:
+  schema_version: "1.0"
+  validate_endpoints: true
+  validate_graders: true
+  validate_tasks: true

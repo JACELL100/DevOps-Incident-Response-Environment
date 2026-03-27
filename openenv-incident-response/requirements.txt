@@ -1,0 +1,17 @@
+# DevOps Incident Response Environment Dependencies
+
+# Core
+pydantic>=2.0.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+
+# API client for inference
+openai>=1.0.0
+
+# Utils
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+
+# Testing
+pytest>=7.0.0
+httpx>=0.24.0
