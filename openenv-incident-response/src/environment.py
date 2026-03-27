@@ -356,13 +356,19 @@ class IncidentResponseEnv:
         match = re.search(r"\d+", text)
         return int(match.group()) if match else None
 
+    def _normalize_action_type(self, action_type) -> str:
+        """Normalize action type to string value."""
+        if hasattr(action_type, 'value'):
+            return action_type.value
+        return str(action_type)
+
     def _execute_action(self, action: Action) -> dict[str, Any]:
         """Execute an action and return the result."""
-        action_type = action.action_type
+        action_type = self._normalize_action_type(action.action_type)
         service_name = action.service
 
         try:
-            if action_type == ActionType.QUERY_SERVICE:
+            if action_type == ActionType.QUERY_SERVICE.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -372,7 +378,7 @@ class IncidentResponseEnv:
                 self._observation.visible_services[service_name] = info
                 return {"success": True, "data": info.model_dump()}
 
-            elif action_type == ActionType.READ_LOGS:
+            elif action_type == ActionType.READ_LOGS.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -382,7 +388,7 @@ class IncidentResponseEnv:
                 self._observation.visible_logs.extend(logs)
                 return {"success": True, "data": [log.model_dump() for log in logs]}
 
-            elif action_type == ActionType.GET_METRICS:
+            elif action_type == ActionType.GET_METRICS.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -392,11 +398,11 @@ class IncidentResponseEnv:
                 self._observation.visible_metrics[service_name] = metrics
                 return {"success": True, "data": metrics.model_dump()}
 
-            elif action_type == ActionType.GET_ALERTS:
+            elif action_type == ActionType.GET_ALERTS.value:
                 alerts = self.infra.get_alerts(service_name)
                 return {"success": True, "data": [a.model_dump() for a in alerts]}
 
-            elif action_type == ActionType.RESTART_SERVICE:
+            elif action_type == ActionType.RESTART_SERVICE.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -412,7 +418,7 @@ class IncidentResponseEnv:
                     "error": None if success else "Service failed to restart",
                 }
 
-            elif action_type == ActionType.SCALE_SERVICE:
+            elif action_type == ActionType.SCALE_SERVICE.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -427,7 +433,7 @@ class IncidentResponseEnv:
                     "data": {"message": f"Scaled {service_name} to {action.scale_replicas} replicas"},
                 }
 
-            elif action_type == ActionType.ROLLBACK_SERVICE:
+            elif action_type == ActionType.ROLLBACK_SERVICE.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -442,7 +448,7 @@ class IncidentResponseEnv:
                     "data": {"message": f"Rollback of {service_name} {'successful' if success else 'failed'}"},
                 }
 
-            elif action_type == ActionType.UPDATE_CONFIG:
+            elif action_type == ActionType.UPDATE_CONFIG.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -460,7 +466,7 @@ class IncidentResponseEnv:
                     "data": {"message": f"Config {action.config_key} updated on {service_name}"},
                 }
 
-            elif action_type == ActionType.RUN_DIAGNOSTIC:
+            elif action_type == ActionType.RUN_DIAGNOSTIC.value:
                 if not service_name or service_name not in self.infra.services:
                     return {"success": False, "error": f"Unknown service: {service_name}"}
 
@@ -470,7 +476,7 @@ class IncidentResponseEnv:
                 self._observation.visible_diagnostics[service_name] = result
                 return {"success": True, "data": result.model_dump()}
 
-            elif action_type == ActionType.RESOLVE_INCIDENT:
+            elif action_type == ActionType.RESOLVE_INCIDENT.value:
                 # Check if actually resolved
                 if self._check_resolution():
                     return {"success": True, "data": {"message": "Incident resolved successfully"}}
@@ -508,16 +514,16 @@ class IncidentResponseEnv:
         time_penalty = 0.0
         reason = ""
 
-        action_type = action.action_type
+        action_type = self._normalize_action_type(action.action_type)
         success = result.get("success", False)
 
         # Diagnostic actions (querying info)
         if action_type in [
-            ActionType.QUERY_SERVICE,
-            ActionType.READ_LOGS,
-            ActionType.GET_METRICS,
-            ActionType.GET_ALERTS,
-            ActionType.RUN_DIAGNOSTIC,
+            ActionType.QUERY_SERVICE.value,
+            ActionType.READ_LOGS.value,
+            ActionType.GET_METRICS.value,
+            ActionType.GET_ALERTS.value,
+            ActionType.RUN_DIAGNOSTIC.value,
         ]:
             if success:
                 # Reward for investigating affected services
@@ -540,10 +546,10 @@ class IncidentResponseEnv:
 
         # Remediation actions
         elif action_type in [
-            ActionType.RESTART_SERVICE,
-            ActionType.SCALE_SERVICE,
-            ActionType.ROLLBACK_SERVICE,
-            ActionType.UPDATE_CONFIG,
+            ActionType.RESTART_SERVICE.value,
+            ActionType.SCALE_SERVICE.value,
+            ActionType.ROLLBACK_SERVICE.value,
+            ActionType.UPDATE_CONFIG.value,
         ]:
             if success:
                 # Check if this is a required remediation
@@ -612,13 +618,20 @@ class IncidentResponseEnv:
 
     def _action_to_string(self, action: Action) -> str:
         """Convert action to string representation."""
-        parts = [action.action_type.value]
+        # Handle both enum and string values for action_type
+        action_type = action.action_type
+        if hasattr(action_type, 'value'):
+            action_type_str = action_type.value
+        else:
+            action_type_str = str(action_type)
+
+        parts = [action_type_str]
         if action.service:
             parts.append(action.service)
         if action.config_key:
             parts.append(action.config_key)
         if action.config_value:
             parts.append(str(action.config_value))
-        if action.scale_replicas and action.action_type == ActionType.SCALE_SERVICE:
+        if action.scale_replicas and action_type_str == ActionType.SCALE_SERVICE.value:
             parts.append(str(action.scale_replicas))
         return ":".join(parts)

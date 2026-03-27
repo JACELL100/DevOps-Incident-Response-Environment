@@ -153,7 +153,7 @@ class Observation(BaseModel):
     last_action: Optional[str] = None
     last_action_success: bool = True
     last_action_error: Optional[str] = None
-    last_action_result: Optional[dict[str, Any]] = None
+    last_action_result: Optional[Any] = None  # Can be dict or list
 
     # Currently visible data (populated by query actions)
     visible_services: dict[str, ServiceInfo] = Field(default_factory=dict)
@@ -180,9 +180,10 @@ class Action(BaseModel):
     """
     An action the agent can take in the environment.
 
-    The agent must specify an action type and relevant parameters.
+    The agent must specify an action type and relevant parameters,
+    or provide an action_str that will be parsed.
     """
-    action_type: ActionType
+    action_type: Optional[ActionType] = None
 
     # Target service for service-specific actions
     service: Optional[str] = None
@@ -203,8 +204,7 @@ class Action(BaseModel):
     # Raw action string (for compatibility)
     action_str: Optional[str] = None
 
-    class Config:
-        use_enum_values = True
+    model_config = {"use_enum_values": True}
 
 
 # ============================================================================
