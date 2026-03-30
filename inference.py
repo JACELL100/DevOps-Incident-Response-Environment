@@ -27,16 +27,13 @@ from typing import Any
 
 from openai import OpenAI
 
-# Add src to path
+# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src import (
-    Action,
-    ActionType,
-    IncidentResponseEnv,
-    grade_task,
-    list_tasks,
-)
+from models import Action, ActionType
+from server.environment import IncidentResponseEnv
+from server.graders import grade_task
+from server.tasks import list_tasks
 
 
 # ============================================================================

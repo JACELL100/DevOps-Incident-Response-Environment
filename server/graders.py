@@ -10,12 +10,17 @@ producing a score from 0.0 to 1.0 based on:
 
 from __future__ import annotations
 
+import sys
+import os
 from dataclasses import dataclass
 from typing import Any
 
-from .environment import IncidentResponseEnv
-from .models import EnvironmentState, ServiceStatus
-from .tasks import TASKS, TaskDefinition
+# Add parent directory to path for models import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from server.environment import IncidentResponseEnv
+from models import EnvironmentState, ServiceStatus
+from server.tasks import TASKS, TaskDefinition
 
 
 @dataclass

@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..models import AlertSeverity, TaskDefinition
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models import AlertSeverity, TaskDefinition
 
 
 # ============================================================================

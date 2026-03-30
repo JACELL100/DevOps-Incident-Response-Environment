@@ -33,14 +33,14 @@ git clone https://huggingface.co/spaces/openenv/devops-incident-response
 cd devops-incident-response
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Run the Server
 
 ```bash
 # Start the FastAPI server
-python -m uvicorn app:app --host 0.0.0.0 --port 7860
+uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
 ### Run Inference
@@ -58,11 +58,36 @@ python inference.py
 ### Docker
 
 ```bash
-# Build the image
-docker build -t devops-incident-response .
+# Build from project root
+docker build -f server/Dockerfile -t devops-incident-response .
 
 # Run the container
 docker run -p 7860:7860 devops-incident-response
+```
+
+## Project Structure
+
+```
+devops-incident-response/
+├── __init__.py              # Root exports (Action, Observation, Env)
+├── models.py                # Pydantic models
+├── client.py                # EnvClient for remote access
+├── inference.py             # Baseline inference script
+├── openenv.yaml             # OpenEnv configuration
+├── pyproject.toml           # Package configuration
+├── README.md                # This file
+├── outputs/                 # Runtime outputs
+│   ├── logs/
+│   └── evals/
+└── server/
+    ├── __init__.py
+    ├── app.py               # FastAPI server
+    ├── environment.py       # Main environment
+    ├── simulator.py         # Infrastructure simulator
+    ├── graders.py           # Task graders
+    ├── tasks.py             # Task definitions
+    ├── requirements.txt     # Server dependencies
+    └── Dockerfile           # Container definition
 ```
 
 ## Environment Details
@@ -181,30 +206,27 @@ Rewards are shaped to guide learning:
 | GET | `/tasks` | List available tasks |
 | GET | `/health` | Health check |
 
-### Example: Running an Episode
+### Using the Python Client
 
 ```python
-import requests
+from client import EnvClient
 
-BASE_URL = "http://localhost:7860"
+# Connect to server
+client = EnvClient("http://localhost:7860")
 
-# Reset environment
-response = requests.post(f"{BASE_URL}/reset", json={"task_id": "task_easy_oom"})
-session_id = response.json()["session_id"]
-observation = response.json()["observation"]
+# Start episode
+session_id, observation = client.reset("task_easy_oom")
 
-# Take actions
+# Run episode
 while True:
-    action = {"session_id": session_id, "action_str": "get_alerts"}
-    response = requests.post(f"{BASE_URL}/step", json=action)
-    result = response.json()
-
-    if result["done"]:
+    action = "get_alerts"  # Your agent logic here
+    observation, reward, done, info = client.step(session_id, action)
+    if done:
         break
 
-# Grade the episode
-response = requests.post(f"{BASE_URL}/grade", json={"session_id": session_id})
-print(f"Score: {response.json()['score']}")
+# Get final score
+result = client.grade(session_id)
+print(f"Score: {result['score']}")
 ```
 
 ## Grading
@@ -217,35 +239,7 @@ Each task is graded on three components:
 
 Final scores range from 0.0 to 1.0.
 
-## Baseline Scores
-
-| Task | GPT-4o-mini | GPT-4o |
-|------|-------------|--------|
-| Easy (OOM) | ~0.65 | ~0.82 |
-| Medium (Cascade) | ~0.45 | ~0.68 |
-| Hard (Complex) | ~0.30 | ~0.52 |
-
 ## Development
-
-### Project Structure
-
-```
-devops-incident-response/
-├── app.py                 # FastAPI server
-├── inference.py           # Baseline inference script
-├── openenv.yaml           # OpenEnv configuration
-├── Dockerfile             # Container definition
-├── requirements.txt       # Python dependencies
-├── README.md              # This file
-└── src/
-    ├── __init__.py        # Package exports
-    ├── models.py          # Pydantic models
-    ├── environment.py     # Main environment
-    ├── simulator.py       # Infrastructure simulator
-    ├── graders.py         # Task graders
-    └── tasks/
-        └── __init__.py    # Task definitions
-```
 
 ### Running Tests
 
@@ -253,11 +247,14 @@ devops-incident-response/
 pytest tests/ -v
 ```
 
-### Validation
+### OpenEnv CLI
 
 ```bash
-# Validate OpenEnv compliance
+# Validate environment
 openenv validate .
+
+# Deploy to Hugging Face
+openenv push --repo-id your-username/devops-incident-response
 ```
 
 ## Configuration

@@ -17,24 +17,22 @@ Endpoints:
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src import (
-    Action,
-    EnvironmentState,
-    GradeResult,
-    IncidentResponseEnv,
-    Observation,
-    StepResult,
-    grade_task,
-    list_tasks,
-)
+from models import Action, EnvironmentState, Observation, StepResult
+from server.environment import IncidentResponseEnv
+from server.graders import GradeResult, grade_task
+from server.tasks import list_tasks
 
 
 # ============================================================================

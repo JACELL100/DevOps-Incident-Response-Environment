@@ -2,17 +2,18 @@
 Tests for the DevOps Incident Response Environment.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pytest
 from fastapi.testclient import TestClient
 
-from src import (
-    Action,
-    ActionType,
-    IncidentResponseEnv,
-    grade_task,
-    list_tasks,
-)
-from app import app
+from models import Action, ActionType
+from server.environment import IncidentResponseEnv
+from server.graders import grade_task
+from server.tasks import list_tasks
+from server.app import app
 
 
 # ============================================================================

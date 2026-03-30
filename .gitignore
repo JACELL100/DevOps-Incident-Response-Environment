@@ -86,6 +86,11 @@ dmypy.json
 # Output files
 *.log
 inference_results.json
+outputs/logs/*
+outputs/evals/*
+!outputs/.gitkeep
+!outputs/logs/.gitkeep
+!outputs/evals/.gitkeep
 
 # OS
 .DS_Store

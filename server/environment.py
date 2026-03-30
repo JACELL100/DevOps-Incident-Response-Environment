@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+import os
 from datetime import datetime
 from typing import Any, Optional
 
-from .models import (
+# Add parent directory to path for models import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models import (
     Action,
     ActionType,
     AlertSeverity,
@@ -25,7 +30,7 @@ from .models import (
     StepResult,
     TaskDefinition,
 )
-from .simulator import (
+from server.simulator import (
     InfrastructureSimulator,
     create_bad_deploy_scenario,
     create_cascading_failure_scenario,
@@ -33,7 +38,7 @@ from .simulator import (
     create_memory_leak_scenario,
     create_oom_scenario,
 )
-from .tasks import get_task
+from server.tasks import get_task
 
 
 class IncidentResponseEnv:

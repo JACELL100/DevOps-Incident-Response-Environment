@@ -17,7 +17,11 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from .models import (
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models import (
     Alert,
     AlertSeverity,
     DiagnosticResult,
