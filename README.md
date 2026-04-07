@@ -139,6 +139,10 @@ The environment simulates a typical e-commerce microservices architecture:
 | `rollback_service` | Rollback to previous version | `rollback_service:payment-service` |
 | `update_config` | Update configuration | `update_config:order-service:JAVA_OPTS:-Xmx1024m` |
 | `resolve_incident` | Mark incident resolved | `resolve_incident` |
+| `get_runbook` | Consult a runbook | `get_runbook:oom-response` |
+| `get_slo_status` | Check SLO violations | `get_slo_status:order-service` |
+| `get_timeline` | View incident timeline | `get_timeline` |
+| `escalate` | Escalate to next level | `escalate` |
 
 ### Observation Space
 
@@ -148,6 +152,9 @@ Each observation includes:
 - **Visible Data**: Services queried, logs read, metrics fetched, alerts active
 - **Last Action Result**: Success/failure, error messages, returned data
 - **Available Services**: List of all services in the infrastructure
+- **SLO Violations**: Services currently violating SLOs
+- **Incident Duration**: Time elapsed since incident started
+- **Escalation Level**: Current escalation level (1-3)
 
 ### Reward Structure
 
@@ -159,6 +166,7 @@ Rewards are shaped to guide learning:
 | Correct remediation | +0.10 | Taking required fix actions |
 | Successful resolution | +0.30 | Fully resolving the incident |
 | Efficiency bonus | up to +0.10 | Resolving quickly |
+| Runbook consultation | +0.01 | Using runbooks for guidance |
 | Unnecessary actions | -0.01 | Actions not needed |
 | Time pressure | -0.01/step | Penalty after 80% of max steps |
 
@@ -193,6 +201,69 @@ Rewards are shaped to guide learning:
 **Solution**: Fix Redis cluster, restart services with memory leaks, scale as needed.
 
 **Max Steps**: 40
+
+### Task 4: Security Breach (Expert)
+
+**Scenario**: Active credential stuffing attack detected. Suspicious login attempts, account lockouts, and traffic anomalies from specific IP ranges.
+
+**Root Cause**: Credential stuffing attack from malicious IP range targeting authentication service.
+
+**Solution**: Block malicious IPs at WAF, adjust lockout policies, scale auth service to handle cleanup.
+
+**Max Steps**: 50
+
+## Enhanced Features
+
+### 🔖 Runbooks
+
+Agents can consult runbooks for guidance on handling specific incident types:
+
+```python
+# Get a specific runbook
+action = "get_runbook:oom-response"
+
+# Search runbooks by keyword
+action = "get_runbook"  # Lists all available runbooks
+```
+
+Available runbooks:
+- `oom-response` - Out of Memory incidents
+- `database-connection-pool` - Connection pool issues
+- `cascading-failure` - Cascading failure response
+- `security-incident` - Credential attack response
+- `cache-failure` - Redis/cache issues
+- `bad-deployment` - Deployment rollback procedures
+
+### 📊 SLO Tracking
+
+Monitor Service Level Objectives during incidents:
+
+- **Availability SLO**: Target 99.9% uptime
+- **Latency P99 SLO**: Target < 200ms
+- **Error Rate SLO**: Target < 1%
+
+```python
+# Check SLO status
+action = "get_slo_status:order-service"
+```
+
+### 📜 Incident Timeline
+
+Track all events during incident response for post-incident review:
+
+```python
+# Get timeline
+action = "get_timeline"
+```
+
+### 🚨 Escalation
+
+Escalate incidents to higher severity levels when needed:
+
+```python
+# Escalate incident
+action = "escalate"
+```
 
 ## API Reference
 

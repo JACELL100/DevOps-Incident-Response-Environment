@@ -54,6 +54,12 @@ class ActionType(str, Enum):
     UPDATE_CONFIG = "update_config"
     RUN_DIAGNOSTIC = "run_diagnostic"
     RESOLVE_INCIDENT = "resolve_incident"
+    # New actions for enhanced features
+    GET_RUNBOOK = "get_runbook"
+    GET_SLO_STATUS = "get_slo_status"
+    GET_TIMELINE = "get_timeline"
+    ACKNOWLEDGE_ALERT = "acknowledge_alert"
+    ESCALATE = "escalate"
 
 
 # ============================================================================
@@ -170,6 +176,12 @@ class Observation(BaseModel):
 
     # Hint for the agent (optional, used in easier tasks)
     hint: Optional[str] = None
+    
+    # Enhanced features
+    available_runbooks: list[str] = Field(default_factory=list, description="Available runbook IDs")
+    slo_violations: list[str] = Field(default_factory=list, description="Services with SLO violations")
+    incident_duration_minutes: int = Field(default=0, description="How long the incident has been active")
+    escalation_level: int = Field(default=1, description="Current escalation level (1-3)")
 
 
 # ============================================================================
@@ -200,6 +212,16 @@ class Action(BaseModel):
     # For resolve_incident action
     root_cause: Optional[str] = None
     resolution_summary: Optional[str] = None
+
+    # For runbook queries
+    runbook_id: Optional[str] = None
+    search_query: Optional[str] = None
+    
+    # For alert acknowledgment
+    alert_id: Optional[str] = None
+    
+    # For escalation
+    escalation_reason: Optional[str] = None
 
     # Raw action string (for compatibility)
     action_str: Optional[str] = None
@@ -278,6 +300,108 @@ class StepResult(BaseModel):
     reward: Reward
     done: bool
     info: dict[str, Any] = Field(default_factory=dict)
+
+
+# ============================================================================
+# Runbook Model
+# ============================================================================
+
+class Runbook(BaseModel):
+    """A runbook with procedures for handling specific incidents."""
+    id: str
+    title: str
+    description: str
+    symptoms: list[str]
+    diagnostic_steps: list[str]
+    remediation_steps: list[str]
+    escalation_criteria: list[str]
+    related_services: list[str]
+
+
+# ============================================================================
+# SLO/SLA Models
+# ============================================================================
+
+class SLODefinition(BaseModel):
+    """Service Level Objective definition."""
+    name: str
+    target: float = Field(description="Target value (e.g., 99.9 for 99.9%)")
+    current: float = Field(description="Current value")
+    error_budget_remaining: float = Field(description="Remaining error budget as percentage")
+    window: str = Field(default="30d", description="Measurement window")
+    breached: bool = False
+
+
+class SLOStatus(BaseModel):
+    """Current SLO status for a service."""
+    service: str
+    availability_slo: SLODefinition
+    latency_p99_slo: SLODefinition
+    error_rate_slo: SLODefinition
+
+
+# ============================================================================
+# Incident Timeline
+# ============================================================================
+
+class TimelineEvent(BaseModel):
+    """An event in the incident timeline."""
+    timestamp: datetime
+    event_type: str  # "alert", "action", "status_change", "escalation", "communication"
+    description: str
+    actor: str = "system"  # "system", "agent", "user"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IncidentTimeline(BaseModel):
+    """Complete incident timeline for post-incident review."""
+    incident_id: str
+    started_at: datetime
+    events: list[TimelineEvent] = Field(default_factory=list)
+    current_status: str = "investigating"  # investigating, mitigating, resolved
+    severity_changes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# ============================================================================
+# Communication Channel
+# ============================================================================
+
+class ChannelMessage(BaseModel):
+    """A message in a communication channel (simulating Slack/PagerDuty)."""
+    timestamp: datetime
+    channel: str  # "incident-123", "sre-team", "escalations"
+    sender: str
+    message: str
+    message_type: str = "info"  # "info", "alert", "action_required", "resolved"
+    acknowledged: bool = False
+
+
+# ============================================================================
+# Metrics History
+# ============================================================================
+
+class MetricPoint(BaseModel):
+    """A single metric data point."""
+    timestamp: datetime
+    value: float
+
+
+class MetricTimeSeries(BaseModel):
+    """Time series data for a metric."""
+    metric_name: str
+    service: str
+    unit: str
+    points: list[MetricPoint] = Field(default_factory=list)
+    
+    def add_point(self, value: float, timestamp: datetime | None = None):
+        """Add a data point to the time series."""
+        self.points.append(MetricPoint(
+            timestamp=timestamp or datetime.now(),
+            value=value
+        ))
+        # Keep only last 15 minutes (90 points at 10s intervals)
+        if len(self.points) > 90:
+            self.points = self.points[-90:]
 
 
 # ============================================================================

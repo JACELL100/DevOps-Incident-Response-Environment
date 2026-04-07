@@ -13,6 +13,7 @@ from models import Action, ActionType
 from server.environment import IncidentResponseEnv
 from server.graders import grade_task
 from server.tasks import list_tasks
+from server.runbooks import get_runbook, search_runbooks, list_runbooks
 from server.app import app
 
 
@@ -26,10 +27,11 @@ class TestEnvironment:
     def test_list_tasks(self):
         """Test that tasks are properly listed."""
         tasks = list_tasks()
-        assert len(tasks) == 3
+        assert len(tasks) == 4  # Updated for 4 tasks
         assert tasks[0]["id"] == "task_easy_oom"
         assert tasks[1]["id"] == "task_medium_cascade"
         assert tasks[2]["id"] == "task_hard_complex"
+        assert tasks[3]["id"] == "task_expert_security"
 
     def test_reset(self):
         """Test environment reset."""
@@ -40,6 +42,8 @@ class TestEnvironment:
         assert obs.incident is not None
         assert obs.incident.title is not None
         assert len(obs.available_services) > 0
+        assert len(obs.available_runbooks) > 0  # New feature
+        assert obs.escalation_level == 1  # New feature
 
     def test_step_query(self):
         """Test query action."""
@@ -116,7 +120,7 @@ class TestAPI:
         """Test tasks endpoint."""
         response = client.get("/tasks")
         assert response.status_code == 200
-        assert len(response.json()["tasks"]) == 3
+        assert len(response.json()["tasks"]) == 4  # easy, medium, hard, expert
 
     def test_reset(self, client):
         """Test reset endpoint."""
@@ -175,7 +179,7 @@ class TestGraders:
 
     def test_grader_score_range(self):
         """Verify graders produce scores in valid range."""
-        for task_id in ["task_easy_oom", "task_medium_cascade", "task_hard_complex"]:
+        for task_id in ["task_easy_oom", "task_medium_cascade", "task_hard_complex", "task_expert_security"]:
             env = IncidentResponseEnv(task_id)
             env.reset()
 
@@ -200,6 +204,105 @@ class TestGraders:
         grade2 = grade_task("task_easy_oom", env)
 
         assert grade1.score == grade2.score
+
+
+# ============================================================================
+# Enhanced Feature Tests
+# ============================================================================
+
+class TestEnhancedFeatures:
+    """Test new enhanced features."""
+
+    def test_runbooks(self):
+        """Test runbook functionality."""
+        # List runbooks
+        runbooks = list_runbooks()
+        assert len(runbooks) > 0
+        
+        # Get specific runbook
+        runbook = get_runbook("oom-response")
+        assert runbook is not None
+        assert runbook.title == "Out of Memory (OOM) Kill Response"
+        assert len(runbook.symptoms) > 0
+        assert len(runbook.remediation_steps) > 0
+        
+        # Search runbooks
+        results = search_runbooks("database")
+        assert len(results) > 0
+
+    def test_runbook_action(self):
+        """Test runbook action in environment."""
+        env = IncidentResponseEnv("task_easy_oom")
+        env.reset()
+        
+        action = Action(action_type=ActionType.GET_RUNBOOK, runbook_id="oom-response")
+        result = env.step(action)
+        
+        assert result.observation is not None
+        assert "oom-response" in env.runbooks_consulted
+
+    def test_slo_tracking(self):
+        """Test SLO status functionality."""
+        env = IncidentResponseEnv("task_easy_oom")
+        env.reset()
+        
+        # Get SLO status
+        slo_status = env.get_slo_status()
+        assert len(slo_status) > 0
+        
+        # Check SLO structure
+        for service_name, status in slo_status.items():
+            assert "availability_slo" in status
+            assert "latency_p99_slo" in status
+            assert "error_rate_slo" in status
+
+    def test_timeline(self):
+        """Test incident timeline."""
+        env = IncidentResponseEnv("task_easy_oom")
+        env.reset()
+        
+        # Take some actions
+        env.step(Action(action_type=ActionType.GET_ALERTS))
+        env.step(Action(action_type=ActionType.QUERY_SERVICE, service="order-service"))
+        
+        # Get timeline
+        timeline = env.get_timeline()
+        assert timeline.incident_id is not None
+        assert len(timeline.events) > 0
+
+    def test_escalation(self):
+        """Test incident escalation."""
+        env = IncidentResponseEnv("task_easy_oom")
+        env.reset()
+        
+        assert env.escalation_level == 1
+        
+        # Escalate
+        result = env.escalate_incident("Testing escalation")
+        assert result["success"]
+        assert env.escalation_level == 2
+        
+        # Escalate again
+        result = env.escalate_incident()
+        assert result["success"]
+        assert env.escalation_level == 3
+        
+        # Cannot escalate beyond level 3
+        result = env.escalate_incident()
+        assert not result["success"]
+
+    def test_security_task(self):
+        """Test the security breach task."""
+        env = IncidentResponseEnv("task_expert_security")
+        obs = env.reset()
+        
+        assert obs.incident is not None
+        assert "Security" in obs.incident.title or "security" in obs.incident.description.lower()
+        assert len(obs.available_services) > 0
+        
+        # Check that security-specific services exist
+        services = obs.available_services
+        assert "auth-service" in services or "waf-gateway" in services
 
 
 if __name__ == "__main__":

@@ -124,6 +124,41 @@ action_space:
       description: "Mark the incident as resolved"
       parameters: []
 
+    - name: get_runbook
+      description: "Get a runbook for handling specific incident types"
+      parameters:
+        - name: runbook_id
+          type: string
+          required: false
+        - name: search_query
+          type: string
+          required: false
+
+    - name: get_slo_status
+      description: "Get SLO status for services"
+      parameters:
+        - name: service
+          type: string
+          required: false
+
+    - name: get_timeline
+      description: "Get the incident timeline"
+      parameters: []
+
+    - name: acknowledge_alert
+      description: "Acknowledge an alert"
+      parameters:
+        - name: alert_id
+          type: string
+          required: true
+
+    - name: escalate
+      description: "Escalate the incident to next level"
+      parameters:
+        - name: reason
+          type: string
+          required: false
+
 # Observation space
 observation_space:
   type: object
@@ -209,6 +244,23 @@ tasks:
       remediation_weight: 0.45
       efficiency_weight: 0.15
 
+  - id: task_expert_security
+    name: "Security Breach: Credential Stuffing Attack"
+    difficulty: expert
+    description: |
+      Active security incident - credential stuffing attack in progress.
+      Block malicious traffic, protect user accounts, restore normal operations.
+    max_steps: 50
+    time_limit_seconds: 1200
+    grader:
+      type: programmatic
+      module: src.graders
+      function: grade_task
+    metrics:
+      diagnosis_weight: 0.45
+      remediation_weight: 0.40
+      efficiency_weight: 0.15
+
 # Reward configuration
 reward:
   type: shaped
@@ -218,6 +270,7 @@ reward:
     correct_remediation: 0.1
     successful_resolution: 0.3
     efficiency_bonus: 0.1
+    runbook_consultation: 0.01
   penalties:
     unnecessary_actions: -0.01
     harmful_actions: -0.05
@@ -231,6 +284,22 @@ termination:
     - type: successful_resolution
       description: "Episode ends when incident is resolved"
 
+# Enhanced features
+features:
+  runbooks:
+    enabled: true
+    description: "Agents can consult runbooks for guidance"
+  slo_tracking:
+    enabled: true
+    description: "Track SLO violations during incidents"
+  incident_timeline:
+    enabled: true
+    description: "Detailed timeline of incident events"
+  escalation:
+    enabled: true
+    levels: 3
+    description: "Escalation levels for incident severity"
+
 # Tags for discoverability
 tags:
   - devops
@@ -240,6 +309,8 @@ tags:
   - production
   - real-world
   - openenv
+  - security
+  - observability
 
 # Hardware requirements
 requirements:

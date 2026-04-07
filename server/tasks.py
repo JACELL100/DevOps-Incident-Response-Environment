@@ -141,6 +141,54 @@ TASK_HARD = TaskDefinition(
 
 
 # ============================================================================
+# Task 4: Expert - Security Breach
+# ============================================================================
+
+TASK_EXPERT = TaskDefinition(
+    id="task_expert_security",
+    name="Security Breach: Credential Stuffing Attack",
+    difficulty="expert",
+    description="""
+    SECURITY INCIDENT: Suspicious activity detected across authentication systems.
+    
+    Initial reports indicate:
+    - Unusual spike in failed authentication attempts
+    - Multiple users reporting account lockouts
+    - Traffic anomalies from certain IP ranges
+    - Potential credential stuffing attack in progress
+    
+    Your objective:
+    1. Investigate the security alerts and identify attack patterns
+    2. Determine the attack vector and affected systems
+    3. Block malicious traffic while preserving legitimate access
+    4. Mitigate immediate impact (unlock affected users, scale for cleanup)
+    5. Restore normal security posture
+    
+    CRITICAL: This is a live security incident. Every minute of delay
+    increases the blast radius. Balance speed with accuracy.
+    """.strip(),
+    max_steps=50,
+    time_limit_seconds=1200,
+    incident_title="SECURITY ALERT: Active Credential Stuffing Attack Detected",
+    incident_description="Security team has detected credential stuffing attack in progress. 35% authentication failure rate, 150+ legitimate users locked out. Attack originating from IP range 185.220.x.x. Immediate response required.",
+    incident_severity=AlertSeverity.CRITICAL,
+    affected_services=["waf-gateway", "auth-service", "user-service", "redis-cache"],
+    customer_impact="Users unable to log in. Account lockouts affecting legitimate users. Potential data exposure risk.",
+    root_cause="Credential stuffing attack from IP range 185.220.0.0/16 targeting auth-service",
+    required_remediation=[
+        "update_config:waf-gateway:BLOCK_LIST",
+        "restart_service:waf-gateway",
+        "update_config:auth-service:LOCKOUT_DURATION_MIN",
+        "restart_service:auth-service",
+        "scale_service:auth-service",
+    ],
+    diagnosis_weight=0.45,
+    remediation_weight=0.40,
+    efficiency_weight=0.15,
+)
+
+
+# ============================================================================
 # Task Registry
 # ============================================================================
 
@@ -148,6 +196,7 @@ TASKS: dict[str, TaskDefinition] = {
     "task_easy_oom": TASK_EASY,
     "task_medium_cascade": TASK_MEDIUM,
     "task_hard_complex": TASK_HARD,
+    "task_expert_security": TASK_EXPERT,
 }
 
 

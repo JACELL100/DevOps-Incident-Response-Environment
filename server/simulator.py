@@ -803,3 +803,115 @@ def create_complex_incident_scenario(infra: InfrastructureSimulator) -> dict[str
         ],
         "affected_services": ["redis-cache", "user-service", "postgres-db", "order-service", "product-service", "api-gateway"],
     }
+
+
+def create_security_breach_scenario(infra: InfrastructureSimulator) -> dict[str, Any]:
+    """
+    Scenario: Security breach - suspicious activity detected in user-service.
+    
+    This is an expert-level scenario simulating a potential security incident:
+    1. Unusual spike in failed login attempts
+    2. Abnormal traffic patterns from specific IP ranges
+    3. User-service under heavy load from credential stuffing
+    4. Redis being hit with enumeration attacks
+    5. Some legitimate users locked out due to rate limiting
+    
+    Solution requires:
+    - Identifying the attack pattern
+    - Blocking malicious traffic (update WAF config)
+    - Resetting affected user sessions
+    - Scaling to handle cleanup load
+    """
+    infra.create_standard_infrastructure()
+    
+    # Add security-specific services
+    infra.add_service(
+        "waf-gateway",
+        version="2.0.0",
+        replicas=2,
+        dependencies=["api-gateway"],
+        config={"RATE_LIMIT_PER_IP": 100, "BLOCK_LIST": [], "GEO_BLOCK": []},
+    )
+    
+    infra.add_service(
+        "auth-service",
+        version="1.8.0",
+        replicas=3,
+        dependencies=["postgres-db", "redis-cache"],
+        config={"MAX_FAILED_ATTEMPTS": 5, "LOCKOUT_DURATION_MIN": 15, "SESSION_TTL": 3600},
+    )
+    
+    # Auth service under attack
+    infra.services["auth-service"]._status = ServiceStatus.DEGRADED
+    infra.services["auth-service"]._cpu_base = 88.0
+    infra.services["auth-service"]._error_rate = 35.0  # Many failed logins
+    infra.services["auth-service"]._request_rate = 5000.0  # 10x normal
+    infra.services["auth-service"]._add_log(LogLevel.WARN, "Unusual login failure rate detected: 35%")
+    infra.services["auth-service"]._add_log(LogLevel.ERROR, "Rate limit exceeded for IP range 185.220.x.x")
+    infra.services["auth-service"]._add_log(LogLevel.ERROR, "Brute force detection triggered: 500 failed attempts in 60s")
+    infra.services["auth-service"]._add_log(LogLevel.WARN, "Account lockout threshold reached for 150 users")
+    infra.services["auth-service"]._add_log(LogLevel.ERROR, "Suspicious user enumeration pattern detected")
+    
+    # Redis being hammered
+    infra.services["redis-cache"]._status = ServiceStatus.DEGRADED
+    infra.services["redis-cache"]._cpu_base = 75.0
+    infra.services["redis-cache"]._add_log(LogLevel.WARN, "High key lookup rate: 10000/s")
+    infra.services["redis-cache"]._add_log(LogLevel.WARN, "Session lookup failures increasing")
+    
+    # User service affected by auth issues
+    infra.inject_failure("user-service", "dependency_timeout", {"dependency": "auth-service"})
+    infra.services["user-service"]._add_log(LogLevel.ERROR, "Auth service latency > 2000ms")
+    
+    # WAF seeing suspicious patterns
+    infra.services["waf-gateway"]._status = ServiceStatus.DEGRADED
+    infra.services["waf-gateway"]._add_log(LogLevel.WARN, "Unusual traffic pattern from IP range 185.220.0.0/16")
+    infra.services["waf-gateway"]._add_log(LogLevel.WARN, "Geographic anomaly: 80% traffic from unexpected regions")
+    infra.services["waf-gateway"]._add_log(LogLevel.ERROR, "Rate limiting triggered for 500+ IPs")
+    
+    # Generate security-specific alerts
+    infra._add_alert(
+        AlertSeverity.CRITICAL,
+        "auth-service",
+        "Security Alert: Credential Stuffing Attack Suspected",
+        "Abnormal login failure rate (35%) with patterns consistent with credential stuffing. 500+ failed attempts/minute from IP range 185.220.x.x",
+    )
+    
+    infra._add_alert(
+        AlertSeverity.WARNING,
+        "auth-service",
+        "High Account Lockout Rate",
+        "150 legitimate user accounts locked due to failed login threshold. Potential collateral damage from attack.",
+    )
+    
+    infra._add_alert(
+        AlertSeverity.WARNING,
+        "waf-gateway",
+        "Unusual Traffic Pattern",
+        "80% of auth requests originating from unexpected geographic regions. Bot traffic suspected.",
+    )
+    
+    infra._add_alert(
+        AlertSeverity.CRITICAL,
+        "redis-cache",
+        "Session Store Overloaded",
+        "Session validation rate 10x normal. Attack may be attempting session enumeration.",
+    )
+    
+    return {
+        "root_cause": "Credential stuffing attack targeting auth-service from IP range 185.220.0.0/16",
+        "required_remediation": [
+            "update_config:waf-gateway:BLOCK_LIST:185.220.0.0/16",
+            "restart_service:waf-gateway",
+            "update_config:auth-service:LOCKOUT_DURATION_MIN:60",
+            "restart_service:auth-service",
+            "scale_service:auth-service:5",
+        ],
+        "affected_services": ["waf-gateway", "auth-service", "user-service", "redis-cache"],
+        "security_incident": True,
+        "attack_indicators": [
+            "High failed login rate from specific IP range",
+            "Geographic anomaly in traffic sources",
+            "Session enumeration patterns",
+            "Account lockout spike",
+        ],
+    }

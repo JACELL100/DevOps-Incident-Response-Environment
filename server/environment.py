@@ -11,7 +11,7 @@ import json
 import re
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 # Add parent directory to path for models import
@@ -23,12 +23,16 @@ from models import (
     AlertSeverity,
     EnvironmentState,
     IncidentInfo,
+    IncidentTimeline,
     LogLevel,
     Observation,
     Reward,
     ServiceStatus,
+    SLODefinition,
+    SLOStatus,
     StepResult,
     TaskDefinition,
+    TimelineEvent,
 )
 from server.simulator import (
     InfrastructureSimulator,
@@ -37,8 +41,10 @@ from server.simulator import (
     create_complex_incident_scenario,
     create_memory_leak_scenario,
     create_oom_scenario,
+    create_security_breach_scenario,
 )
 from server.tasks import get_task
+from server.runbooks import get_runbook, search_runbooks, list_runbooks
 
 
 class IncidentResponseEnv:
@@ -69,18 +75,28 @@ class IncidentResponseEnv:
         self.current_step = 0
         self.done = False
         self.total_reward = 0.0
+        self.incident_start_time = datetime.now()
 
         # Tracking for grading
         self.actions_taken: list[str] = []
         self.services_queried: set[str] = set()
         self.correct_diagnosis = False
         self.remediation_progress: dict[str, bool] = {}
+        self.runbooks_consulted: set[str] = set()
 
         # Scenario-specific ground truth
         self.scenario_data: dict[str, Any] = {}
 
         # Observation state
         self._observation: Optional[Observation] = None
+        
+        # Enhanced features
+        self.timeline: IncidentTimeline = IncidentTimeline(
+            incident_id=f"INC-{task_id.upper()[:8]}",
+            started_at=datetime.now(),
+        )
+        self.escalation_level = 1
+        self.slo_statuses: dict[str, SLOStatus] = {}
 
     def reset(self) -> Observation:
         """
@@ -96,6 +112,16 @@ class IncidentResponseEnv:
         self.services_queried = set()
         self.correct_diagnosis = False
         self.remediation_progress = {}
+        self.runbooks_consulted = set()
+        self.incident_start_time = datetime.now()
+        self.escalation_level = 1
+
+        # Reset timeline
+        self.timeline = IncidentTimeline(
+            incident_id=f"INC-{self.task_id.upper()[:8]}",
+            started_at=datetime.now(),
+        )
+        self._add_timeline_event("alert", "Incident detected and page sent", "system")
 
         # Reset infrastructure
         self.infra = InfrastructureSimulator()
@@ -107,9 +133,14 @@ class IncidentResponseEnv:
             self.scenario_data = create_cascading_failure_scenario(self.infra)
         elif self.task_id == "task_hard_complex":
             self.scenario_data = create_complex_incident_scenario(self.infra)
+        elif self.task_id == "task_expert_security":
+            self.scenario_data = create_security_breach_scenario(self.infra)
         else:
             # Default fallback
             self.scenario_data = create_oom_scenario(self.infra)
+
+        # Initialize SLO tracking (after services are set up)
+        self._initialize_slo_tracking()
 
         # Initialize remediation tracking
         for action in self.scenario_data.get("required_remediation", []):
@@ -222,13 +253,19 @@ class IncidentResponseEnv:
         hint = None
         if self.task.difficulty == "easy" and self.current_step == 0:
             hint = "Start by checking the alerts and querying the affected service's logs and metrics."
+        
+        # Calculate incident duration
+        incident_duration = int((datetime.now() - self.incident_start_time).total_seconds() / 60)
+        
+        # Get SLO violations
+        slo_violations = self._get_slo_violations()
 
         return Observation(
             incident=IncidentInfo(
                 id=f"INC-{self.task_id.upper()[:8]}",
                 title=self.task.incident_title,
                 severity=self.task.incident_severity,
-                started_at=datetime.now(),
+                started_at=self.incident_start_time,
                 description=self.task.incident_description,
                 affected_services=self.task.affected_services,
                 customer_impact=self.task.customer_impact,
@@ -242,6 +279,10 @@ class IncidentResponseEnv:
             action_history=self.actions_taken.copy(),
             available_services=self.infra.get_service_names(),
             hint=hint,
+            available_runbooks=[r["id"] for r in list_runbooks()],
+            slo_violations=slo_violations,
+            incident_duration_minutes=incident_duration,
+            escalation_level=self.escalation_level,
         )
 
     def _parse_action_string(self, action_str: str) -> Action:
@@ -278,6 +319,16 @@ class IncidentResponseEnv:
                 "diagnostics": ActionType.RUN_DIAGNOSTIC,
                 "resolve_incident": ActionType.RESOLVE_INCIDENT,
                 "resolve": ActionType.RESOLVE_INCIDENT,
+                # New enhanced actions
+                "get_runbook": ActionType.GET_RUNBOOK,
+                "runbook": ActionType.GET_RUNBOOK,
+                "get_slo_status": ActionType.GET_SLO_STATUS,
+                "slo": ActionType.GET_SLO_STATUS,
+                "get_timeline": ActionType.GET_TIMELINE,
+                "timeline": ActionType.GET_TIMELINE,
+                "acknowledge_alert": ActionType.ACKNOWLEDGE_ALERT,
+                "ack": ActionType.ACKNOWLEDGE_ALERT,
+                "escalate": ActionType.ESCALATE,
             }
 
             if action_type in type_map:
@@ -292,10 +343,33 @@ class IncidentResponseEnv:
                 if action_type in ["config", "update_config"] and param:
                     action.config_key = param
                     action.config_value = extra
+                
+                if action_type in ["runbook", "get_runbook"] and service:
+                    action.runbook_id = service
+                    action.service = None
+                
+                if action_type in ["ack", "acknowledge_alert"] and service:
+                    action.alert_id = service
+                    action.service = None
 
                 return action
 
         # Parse natural language
+        if "runbook" in action_str:
+            # Extract runbook ID from action string
+            runbook_id = action_str.replace("runbook", "").replace("get_runbook", "").strip().strip(":")
+            return Action(action_type=ActionType.GET_RUNBOOK, runbook_id=runbook_id if runbook_id else None)
+        
+        if "slo" in action_str:
+            service = self._extract_service_name(action_str)
+            return Action(action_type=ActionType.GET_SLO_STATUS, service=service)
+        
+        if "timeline" in action_str:
+            return Action(action_type=ActionType.GET_TIMELINE)
+        
+        if "escalate" in action_str:
+            return Action(action_type=ActionType.ESCALATE)
+
         if "restart" in action_str:
             service = self._extract_service_name(action_str)
             return Action(action_type=ActionType.RESTART_SERVICE, service=service)
@@ -484,6 +558,7 @@ class IncidentResponseEnv:
             elif action_type == ActionType.RESOLVE_INCIDENT.value:
                 # Check if actually resolved
                 if self._check_resolution():
+                    self._add_timeline_event("status_change", "Incident marked as resolved", "agent")
                     return {"success": True, "data": {"message": "Incident resolved successfully"}}
                 else:
                     return {
@@ -491,6 +566,48 @@ class IncidentResponseEnv:
                         "error": "Incident not yet resolved. Some services still unhealthy.",
                         "data": {"unhealthy_services": self._get_unhealthy_services()},
                     }
+
+            # =========================================================
+            # New Enhanced Actions
+            # =========================================================
+            
+            elif action_type == ActionType.GET_RUNBOOK.value:
+                # Get a specific runbook or search for runbooks
+                if action.runbook_id:
+                    runbook = get_runbook(action.runbook_id)
+                    if runbook:
+                        self.runbooks_consulted.add(action.runbook_id)
+                        self._add_timeline_event("action", f"Consulted runbook: {runbook.title}", "agent")
+                        return {"success": True, "data": runbook.model_dump()}
+                    return {"success": False, "error": f"Runbook not found: {action.runbook_id}"}
+                elif action.search_query:
+                    results = search_runbooks(action.search_query)
+                    return {"success": True, "data": [r.model_dump() for r in results]}
+                else:
+                    # List all runbooks
+                    return {"success": True, "data": list_runbooks()}
+
+            elif action_type == ActionType.GET_SLO_STATUS.value:
+                # Get SLO status
+                slo_data = self.get_slo_status(action.service)
+                return {"success": True, "data": slo_data}
+
+            elif action_type == ActionType.GET_TIMELINE.value:
+                # Get incident timeline
+                return {"success": True, "data": self.timeline.model_dump()}
+
+            elif action_type == ActionType.ACKNOWLEDGE_ALERT.value:
+                # Acknowledge an alert
+                if not action.alert_id:
+                    return {"success": False, "error": "No alert_id provided"}
+                self.infra.resolve_alert(action.alert_id)
+                self._add_timeline_event("action", f"Alert acknowledged: {action.alert_id}", "agent")
+                return {"success": True, "data": {"message": f"Alert {action.alert_id} acknowledged"}}
+
+            elif action_type == ActionType.ESCALATE.value:
+                # Escalate incident
+                result = self.escalate_incident(action.escalation_reason)
+                return result
 
             else:
                 return {"success": False, "error": f"Unknown action type: {action_type}"}
@@ -640,3 +757,111 @@ class IncidentResponseEnv:
         if action.scale_replicas and action_type_str == ActionType.SCALE_SERVICE.value:
             parts.append(str(action.scale_replicas))
         return ":".join(parts)
+
+    # =========================================================================
+    # Enhanced Feature Methods
+    # =========================================================================
+
+    def _initialize_slo_tracking(self):
+        """Initialize SLO tracking for affected services."""
+        self.slo_statuses = {}
+        
+        # Create SLO status for each service
+        for service_name in self.infra.get_service_names():
+            # Simulate SLO degradation based on service health
+            service = self.infra.services.get(service_name)
+            if not service:
+                continue
+                
+            metrics = service.get_metrics()
+            
+            # Availability SLO (based on error rate)
+            availability_current = 100.0 - metrics.error_rate
+            availability_target = 99.9
+            availability_breached = availability_current < availability_target
+            
+            # Latency SLO
+            latency_target = 200.0  # ms
+            latency_current = metrics.latency_p99_ms
+            latency_breached = latency_current > latency_target
+            
+            # Error rate SLO
+            error_target = 1.0  # %
+            error_current = metrics.error_rate
+            error_breached = error_current > error_target
+            
+            self.slo_statuses[service_name] = SLOStatus(
+                service=service_name,
+                availability_slo=SLODefinition(
+                    name="availability",
+                    target=availability_target,
+                    current=availability_current,
+                    error_budget_remaining=max(0, (availability_current - availability_target) / (100 - availability_target) * 100),
+                    breached=availability_breached,
+                ),
+                latency_p99_slo=SLODefinition(
+                    name="latency_p99",
+                    target=latency_target,
+                    current=latency_current,
+                    error_budget_remaining=max(0, (latency_target - latency_current) / latency_target * 100) if latency_current < latency_target else 0,
+                    breached=latency_breached,
+                ),
+                error_rate_slo=SLODefinition(
+                    name="error_rate",
+                    target=error_target,
+                    current=error_current,
+                    error_budget_remaining=max(0, (error_target - error_current) / error_target * 100) if error_current < error_target else 0,
+                    breached=error_breached,
+                ),
+            )
+
+    def _get_slo_violations(self) -> list[str]:
+        """Get list of services with SLO violations."""
+        violations = []
+        for service_name, slo_status in self.slo_statuses.items():
+            if (slo_status.availability_slo.breached or 
+                slo_status.latency_p99_slo.breached or 
+                slo_status.error_rate_slo.breached):
+                violations.append(service_name)
+        return violations
+
+    def _add_timeline_event(self, event_type: str, description: str, actor: str = "agent", metadata: dict = None):
+        """Add an event to the incident timeline."""
+        self.timeline.events.append(TimelineEvent(
+            timestamp=datetime.now(),
+            event_type=event_type,
+            description=description,
+            actor=actor,
+            metadata=metadata or {},
+        ))
+
+    def get_timeline(self) -> IncidentTimeline:
+        """Get the incident timeline."""
+        return self.timeline
+
+    def get_slo_status(self, service_name: str = None) -> dict:
+        """Get SLO status for a service or all services."""
+        if service_name and service_name in self.slo_statuses:
+            return self.slo_statuses[service_name].model_dump()
+        return {name: status.model_dump() for name, status in self.slo_statuses.items()}
+
+    def escalate_incident(self, reason: str = None) -> dict:
+        """Escalate the incident to the next level."""
+        if self.escalation_level >= 3:
+            return {"success": False, "error": "Already at maximum escalation level"}
+        
+        self.escalation_level += 1
+        self._add_timeline_event(
+            "escalation",
+            f"Incident escalated to level {self.escalation_level}: {reason or 'Manual escalation'}",
+            "agent",
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "new_level": self.escalation_level,
+                "message": f"Incident escalated to level {self.escalation_level}",
+            }
+        }
+
