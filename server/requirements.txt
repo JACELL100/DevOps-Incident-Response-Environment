@@ -1,0 +1,11 @@
+# Server dependencies for DevOps Incident Response Environment
+
+# Web framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Utils
+python-dotenv>=1.0.0

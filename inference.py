@@ -2,15 +2,13 @@
 """
 Baseline Inference Script for DevOps Incident Response Environment.
 
-This script runs an AI agent against all tasks in the environment
-and reports performance scores. It uses the OpenAI API client
-as specified in the hackathon requirements.
+This script runs an AI agent against the environment deployed on Hugging Face Spaces
+and reports performance scores using the required structured logging format.
 
-Environment Variables:
+Environment Variables (REQUIRED):
     API_BASE_URL: The API endpoint for the LLM
     MODEL_NAME: The model identifier to use
-    HF_TOKEN: Hugging Face / API key (used as OPENAI_API_KEY)
-    OPENAI_API_KEY: Alternative API key variable
+    HF_TOKEN: Hugging Face / API key
 
 Usage:
     python inference.py
@@ -23,31 +21,61 @@ import os
 import re
 import sys
 import time
-from typing import Any
+from typing import Any, List, Optional
 
+import httpx
+from dotenv import load_dotenv
 from openai import OpenAI
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from models import Action, ActionType
-from server.environment import IncidentResponseEnv
-from server.graders import grade_task
-from server.tasks import list_tasks
+# Load environment variables from .env file
+load_dotenv()
 
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-API_KEY = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY", "")
+API_BASE_URL = os.environ.get("API_BASE_URL", "")
+MODEL_NAME = os.environ.get("MODEL_NAME", "")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
+# Environment server URL (Hugging Face Space or local)
+ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
+
+# Benchmark/Environment name
+BENCHMARK = "devops-incident-response"
+
+# Task to run (can be overridden via environment)
+TASK_NAME = os.environ.get("TASK_NAME", "task_easy_oom")
+
+# Inference parameters
+MAX_STEPS = 15  # Will be updated per task
 MAX_TOKENS = 1024
 TEMPERATURE = 0.3
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
+SUCCESS_SCORE_THRESHOLD = 0.6
+
+
+# ============================================================================
+# Structured Logging Functions (REQUIRED FORMAT)
+# ============================================================================
+
+def log_start(task: str, env: str, model: str) -> None:
+    """Log the start of an episode in required format."""
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str] = None) -> None:
+    """Log each step in required format."""
+    error_str = f" error={error}" if error else ""
+    print(f"[STEP] step={step} action={action} reward={reward} done={done}{error_str}", flush=True)
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    """Log the end of an episode in required format."""
+    rewards_str = json.dumps(rewards)
+    print(f"[END] success={success} steps={steps} score={score} rewards={rewards_str}", flush=True)
 
 
 # ============================================================================
@@ -62,17 +90,17 @@ Your job is to diagnose the root cause of the incident and take appropriate reme
 
 You can take the following actions (use the exact format shown):
 
-1. **Query Service Status**: `query_service:<service_name>`
+1. **Get Alerts**: `get_alerts`
+   - Get all active monitoring alerts (ALWAYS START HERE)
+
+2. **Query Service Status**: `query_service:<service_name>`
    - Get current status, replicas, version, and dependencies
 
-2. **Read Logs**: `read_logs:<service_name>`
+3. **Read Logs**: `read_logs:<service_name>`
    - Get recent log entries from the service
 
-3. **Get Metrics**: `get_metrics:<service_name>`
+4. **Get Metrics**: `get_metrics:<service_name>`
    - Get CPU, memory, latency, and error rate metrics
-
-4. **Get Alerts**: `get_alerts`
-   - Get all active monitoring alerts
 
 5. **Run Diagnostics**: `run_diagnostic:<service_name>`
    - Run diagnostic checks on a service
@@ -103,20 +131,94 @@ ACTION: [action_string]
 
 Example:
 ```
-THOUGHT: The order-service is showing OOM errors in the logs. The current heap size is too small. I need to increase the Java heap size.
-ACTION: update_config:order-service:JAVA_OPTS:-Xmx1024m -Xms512m
+THOUGHT: I need to first check what alerts are firing to understand the scope of the incident.
+ACTION: get_alerts
 ```
 
-## Guidelines
+## Critical Guidelines
 
-1. Start by gathering information - check alerts, query affected services, read logs
-2. Look for patterns in errors and metrics
+1. **ALWAYS start with get_alerts** - understand what's broken before investigating
+2. Read logs and metrics for affected services to identify root cause
 3. Identify the root cause before attempting fixes
 4. Configuration changes require a service restart to take effect
-5. Work methodically through the affected services
-6. Only call resolve_incident when you've verified the fix worked
+5. Only scale or rollback if specifically indicated by the diagnostics
+6. Verify your fix worked (check metrics/logs again) before calling resolve_incident
+7. Work methodically - don't spam random actions
 
-Remember: You're dealing with a production system. Be careful and methodical."""
+## Common Patterns
+
+- **OOM errors**: Increase heap size with update_config, then restart
+- **Connection timeouts**: Check connection pool settings, may need to increase max_connections
+- **High latency**: Check dependent services, look for cascading failures
+- **Cache failures**: May need to restart cache service or check network partitions
+
+Remember: You're dealing with a production system. Be methodical and verify your fixes."""
+
+
+# ============================================================================
+# Environment Client (HTTP-based)
+# ============================================================================
+
+class EnvClient:
+    """HTTP client for interacting with the environment server."""
+
+    def __init__(self, base_url: str, timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/")
+        self.client = httpx.Client(timeout=timeout)
+        self.session_id: Optional[str] = None
+
+    def reset(self, task_id: str) -> dict:
+        """Reset the environment and start a new episode."""
+        response = self.client.post(
+            f"{self.base_url}/reset",
+            json={"task_id": task_id}
+        )
+        response.raise_for_status()
+        data = response.json()
+        self.session_id = data["session_id"]
+        return data["observation"]
+
+    def step(self, action_str: str) -> dict:
+        """Take an action in the environment."""
+        if not self.session_id:
+            raise RuntimeError("Must call reset() before step()")
+
+        response = self.client.post(
+            f"{self.base_url}/step",
+            json={"session_id": self.session_id, "action_str": action_str}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def grade(self) -> dict:
+        """Get the final grade for the episode."""
+        if not self.session_id:
+            raise RuntimeError("Must call reset() before grade()")
+
+        response = self.client.post(
+            f"{self.base_url}/grade",
+            json={"session_id": self.session_id}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_tasks(self) -> list:
+        """Get list of available tasks."""
+        response = self.client.get(f"{self.base_url}/tasks")
+        response.raise_for_status()
+        return response.json()["tasks"]
+
+    def health(self) -> bool:
+        """Check if the environment is healthy."""
+        try:
+            response = self.client.get(f"{self.base_url}/health")
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        """Close the HTTP client."""
+        self.client.close()
 
 
 # ============================================================================
@@ -157,248 +259,185 @@ def parse_model_response(response: str) -> str:
 
 
 # ============================================================================
-# Agent
+# LLM Agent
 # ============================================================================
 
-class IncidentResponseAgent:
-    """AI agent for incident response using OpenAI API."""
+def get_model_message(
+    client: OpenAI,
+    step: int,
+    observation: dict,
+    last_reward: float,
+    history: List[str]
+) -> str:
+    """Get an action from the LLM based on current observation."""
+    # Format observation for the model
+    obs_text = format_observation_dict(observation)
 
-    def __init__(self, client: OpenAI, model: str = MODEL_NAME):
-        self.client = client
-        self.model = model
-        self.conversation_history: list[dict[str, Any]] = []
+    # Build conversation
+    user_content = f"Step {step}:\n{obs_text}"
+    if last_reward != 0:
+        user_content += f"\n\nLast reward: {last_reward:+.2f}"
+    if history:
+        user_content += f"\n\nRecent history:\n" + "\n".join(history[-5:])
 
-    def reset(self):
-        """Reset conversation history."""
-        self.conversation_history = []
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
 
-    def get_action(self, observation_str: str) -> str:
-        """Get an action from the model based on current observation."""
-        # Add observation to history
-        self.conversation_history.append({
-            "role": "user",
-            "content": observation_str,
-        })
-
-        # Prepare messages
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *self.conversation_history,
-        ]
-
-        # Call the model
-        for attempt in range(MAX_RETRIES):
-            try:
-                completion = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                )
-                response = completion.choices[0].message.content or ""
-
-                # Add response to history
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": response,
-                })
-
-                # Parse action
-                action = parse_model_response(response)
-                return action
-
-            except Exception as e:
-                print(f"  API call failed (attempt {attempt + 1}): {e}")
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-
-        # Fallback
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+        )
+        text = (completion.choices[0].message.content or "").strip()
+        action = parse_model_response(text) if text else "get_alerts"
+        return action
+    except Exception as exc:
+        print(f"[DEBUG] Model request failed: {exc}", flush=True)
         return "get_alerts"
 
 
-# ============================================================================
-# Observation Formatter
-# ============================================================================
-
-def format_observation(obs) -> str:
-    """Format observation as readable text for the model."""
+def format_observation_dict(obs: dict) -> str:
+    """Format observation dictionary as readable text for the model."""
     lines = []
 
     # Incident info
+    incident = obs.get("incident", {})
     lines.append("=" * 60)
-    lines.append(f"INCIDENT: {obs.incident.title}")
-    lines.append(f"Severity: {obs.incident.severity}")
-    lines.append(f"Description: {obs.incident.description}")
-    lines.append(f"Affected Services: {', '.join(obs.incident.affected_services)}")
-    lines.append(f"Customer Impact: {obs.incident.customer_impact}")
+    lines.append(f"INCIDENT: {incident.get('title', 'Unknown')}")
+    lines.append(f"Severity: {incident.get('severity', 'unknown')}")
+    lines.append(f"Description: {incident.get('description', '')}")
+    affected = incident.get('affected_services', [])
+    lines.append(f"Affected Services: {', '.join(affected)}")
+    lines.append(f"Customer Impact: {incident.get('customer_impact', '')}")
     lines.append("=" * 60)
 
     # Step info
-    lines.append(f"\nStep: {obs.step}")
+    lines.append(f"\nStep: {obs.get('step', 0)}")
 
     # Available services
-    lines.append(f"\nAvailable services: {', '.join(obs.available_services)}")
+    services = obs.get('available_services', [])
+    lines.append(f"\nAvailable services: {', '.join(services)}")
 
     # Last action result
-    if obs.last_action:
-        lines.append(f"\nLast action: {obs.last_action}")
-        if obs.last_action_success:
+    last_action = obs.get('last_action')
+    if last_action:
+        lines.append(f"\nLast action: {last_action}")
+        if obs.get('last_action_success', True):
             lines.append("Result: SUCCESS")
         else:
-            lines.append(f"Result: FAILED - {obs.last_action_error}")
+            lines.append(f"Result: FAILED - {obs.get('last_action_error', '')}")
 
-        if obs.last_action_result:
-            result_str = json.dumps(obs.last_action_result, indent=2, default=str)
+        result = obs.get('last_action_result')
+        if result:
+            result_str = json.dumps(result, indent=2, default=str)
             lines.append(f"Data:\n{result_str}")
 
     # Active alerts
-    if obs.visible_alerts:
+    alerts = obs.get('visible_alerts', [])
+    if alerts:
         lines.append("\n--- ACTIVE ALERTS ---")
-        for alert in obs.visible_alerts:
-            lines.append(f"[{alert.severity}] {alert.title}")
-            lines.append(f"  Service: {alert.service}")
-            lines.append(f"  {alert.description}")
+        for alert in alerts:
+            lines.append(f"[{alert.get('severity', 'unknown')}] {alert.get('title', '')}")
+            lines.append(f"  Service: {alert.get('service', '')}")
+            lines.append(f"  {alert.get('description', '')}")
 
-    # Hint (for easy tasks)
-    if obs.hint:
-        lines.append(f"\nHINT: {obs.hint}")
+    # Hint
+    hint = obs.get('hint')
+    if hint:
+        lines.append(f"\nHINT: {hint}")
 
     return "\n".join(lines)
-
-
-# ============================================================================
-# Run Episode
-# ============================================================================
-
-def run_episode(env: IncidentResponseEnv, agent: IncidentResponseAgent) -> dict[str, Any]:
-    """Run a single episode and return results."""
-    observation = env.reset()
-    agent.reset()
-
-    total_reward = 0.0
-    steps = 0
-    actions_taken = []
-
-    print(f"\n{'='*60}")
-    print(f"Starting episode: {env.task.name}")
-    print(f"Difficulty: {env.task.difficulty}")
-    print(f"Max steps: {env.task.max_steps}")
-    print(f"{'='*60}\n")
-
-    while not env.done and steps < env.task.max_steps:
-        # Format observation for model
-        obs_str = format_observation(observation)
-
-        # Get action from agent
-        action_str = agent.get_action(obs_str)
-        print(f"Step {steps + 1}: {action_str}")
-
-        # Execute action
-        action = Action(action_str=action_str)
-        result = env.step(action)
-
-        observation = result.observation
-        total_reward += result.reward.value
-        steps += 1
-        actions_taken.append(action_str)
-
-        # Print progress
-        if result.done:
-            print(f"  -> Episode done. Total reward: {total_reward:.4f}")
-            break
-
-    # Grade the episode
-    grade = grade_task(env.task_id, env)
-
-    return {
-        "task_id": env.task_id,
-        "task_name": env.task.name,
-        "difficulty": env.task.difficulty,
-        "steps": steps,
-        "total_reward": total_reward,
-        "score": grade.score,
-        "diagnosis_score": grade.diagnosis_score,
-        "remediation_score": grade.remediation_score,
-        "efficiency_score": grade.efficiency_score,
-        "feedback": grade.feedback,
-        "resolved": env.state().resolved,
-        "actions": actions_taken,
-    }
 
 
 # ============================================================================
 # Main
 # ============================================================================
 
-def main():
-    """Run inference on all tasks."""
-    print("DevOps Incident Response Environment - Baseline Inference")
-    print("=" * 60)
-
-    # Check API key
-    if not API_KEY:
-        print("ERROR: No API key found. Set OPENAI_API_KEY or HF_TOKEN environment variable.")
+def main() -> None:
+    """Run inference on the environment."""
+    # Validate configuration
+    if not HF_TOKEN:
+        print("[ERROR] HF_TOKEN environment variable is required", flush=True)
+        sys.exit(1)
+    if not API_BASE_URL:
+        print("[ERROR] API_BASE_URL environment variable is required", flush=True)
+        sys.exit(1)
+    if not MODEL_NAME:
+        print("[ERROR] MODEL_NAME environment variable is required", flush=True)
         sys.exit(1)
 
-    # Initialize client
-    print(f"API Base: {API_BASE_URL}")
-    print(f"Model: {MODEL_NAME}")
+    # Initialize clients
+    llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    env_client = EnvClient(ENV_URL)
 
-    client = OpenAI(
-        api_key=API_KEY,
-        base_url=API_BASE_URL,
-    )
+    # Check environment health
+    if not env_client.health():
+        print(f"[ERROR] Environment at {ENV_URL} is not healthy", flush=True)
+        sys.exit(1)
 
-    # Create agent
-    agent = IncidentResponseAgent(client, MODEL_NAME)
+    # Get tasks and find max_steps for our task
+    tasks = env_client.get_tasks()
+    task_info = next((t for t in tasks if t["id"] == TASK_NAME), None)
+    max_steps = task_info["max_steps"] if task_info else MAX_STEPS
 
-    # Get all tasks
-    tasks = list_tasks()
-    print(f"\nFound {len(tasks)} tasks:")
-    for task in tasks:
-        print(f"  - {task['id']}: {task['name']} ({task['difficulty']})")
+    # Initialize tracking
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
 
-    # Run each task
-    results = []
-    for task in tasks:
-        task_id = task["id"]
-        env = IncidentResponseEnv(task_id=task_id)
+    # Log start
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-        result = run_episode(env, agent)
-        results.append(result)
+    try:
+        # Reset environment
+        observation = env_client.reset(TASK_NAME)
+        last_reward = 0.0
 
-        print(f"\n--- {task_id} Results ---")
-        print(f"Score: {result['score']:.4f}")
-        print(f"Resolved: {result['resolved']}")
-        print(f"Feedback: {result['feedback']}")
+        for step in range(1, max_steps + 1):
+            # Get action from LLM
+            action = get_model_message(llm_client, step, observation, last_reward, history)
 
-    # Summary
-    print("\n" + "=" * 60)
-    print("FINAL RESULTS")
-    print("=" * 60)
+            # Take step in environment
+            result = env_client.step(action)
 
-    total_score = sum(r["score"] for r in results)
-    avg_score = total_score / len(results) if results else 0.0
+            observation = result["observation"]
+            reward = result.get("reward", 0.0)
+            done = result.get("done", False)
+            error = None
 
-    for result in results:
-        status = "RESOLVED" if result["resolved"] else "UNRESOLVED"
-        print(f"{result['task_id']}: {result['score']:.4f} [{status}]")
+            rewards.append(reward)
+            steps_taken = step
+            last_reward = reward
 
-    print(f"\nAverage Score: {avg_score:.4f}")
-    print(f"Total Score: {total_score:.4f}")
+            # Log step
+            log_step(step=step, action=action, reward=reward, done=done, error=error)
 
-    # Save results
-    output_file = "inference_results.json"
-    with open(output_file, "w") as f:
-        json.dump({
-            "model": MODEL_NAME,
-            "results": results,
-            "average_score": avg_score,
-            "total_score": total_score,
-        }, f, indent=2)
-    print(f"\nResults saved to {output_file}")
+            # Track history
+            history.append(f"Step {step}: {action!r} -> reward {reward:+.2f}")
 
-    return results
+            if done:
+                break
+
+        # Get final grade
+        grade_result = env_client.grade()
+        score = grade_result.get("score", 0.0)
+        score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    except Exception as e:
+        print(f"[DEBUG] Error during inference: {e}", flush=True)
+        score = 0.0
+        success = False
+
+    finally:
+        env_client.close()
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":

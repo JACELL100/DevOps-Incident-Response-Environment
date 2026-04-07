@@ -603,12 +603,12 @@ class IncidentResponseEnv:
 
     def _check_resolution(self) -> bool:
         """Check if the incident is resolved."""
-        # All affected services must be healthy
+        # All affected services must be healthy (not just degraded)
         affected = self.scenario_data.get("affected_services", [])
         for service_name in affected:
             if service_name in self.infra.services:
                 service = self.infra.services[service_name]
-                if service.get_status() not in [ServiceStatus.HEALTHY, ServiceStatus.DEGRADED]:
+                if service.get_status() != ServiceStatus.HEALTHY:
                     return False
 
         return True

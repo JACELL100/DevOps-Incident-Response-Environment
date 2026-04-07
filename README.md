@@ -46,10 +46,11 @@ uvicorn server.app:app --host 0.0.0.0 --port 7860
 ### Run Inference
 
 ```bash
-# Set your API credentials
-export API_BASE_URL="https://api.openai.com/v1"
-export MODEL_NAME="gpt-4o-mini"
-export OPENAI_API_KEY="your-api-key"
+# Set your API credentials (REQUIRED)
+export API_BASE_URL="https://api-inference.huggingface.co/v1"
+export MODEL_NAME="meta-llama/Meta-Llama-3-8B-Instruct"
+export HF_TOKEN="your-huggingface-token"
+export ENV_URL="http://localhost:7860"  # or your HF Space URL
 
 # Run the baseline agent
 python inference.py
@@ -261,13 +262,23 @@ openenv push --repo-id your-username/devops-incident-response
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `API_BASE_URL` | LLM API endpoint | `https://api.openai.com/v1` |
-| `MODEL_NAME` | Model to use for inference | `gpt-4o-mini` |
-| `OPENAI_API_KEY` | API key for LLM | Required |
-| `HF_TOKEN` | Alternative API key | - |
-| `PORT` | Server port | `7860` |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `API_BASE_URL` | LLM API endpoint | **Yes** |
+| `MODEL_NAME` | Model to use for inference | **Yes** |
+| `HF_TOKEN` | Hugging Face / API key for LLM | **Yes** |
+| `ENV_URL` | Environment server URL | No (default: `http://localhost:7860`) |
+| `TASK_NAME` | Task to run | No (default: `task_easy_oom`) |
+| `PORT` | Server port | No (default: `7860`) |
+
+### Example .env file
+
+```bash
+API_BASE_URL=https://api-inference.huggingface.co/v1
+MODEL_NAME=meta-llama/Meta-Llama-3-8B-Instruct
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+ENV_URL=https://your-space.hf.space
+```
 
 ## License
 
