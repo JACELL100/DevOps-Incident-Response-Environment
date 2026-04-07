@@ -1,3 +1,13 @@
+---
+title: DevOps Incident Response Environment
+emoji: 🚨
+colorFrom: red
+colorTo: yellow
+sdk: docker
+pinned: false
+license: mit
+---
+
 # DevOps Incident Response Environment
 
 An **OpenEnv-compliant** reinforcement learning environment for training AI agents in production incident response. This environment simulates a realistic microservices infrastructure where agents must diagnose and resolve production incidents.
