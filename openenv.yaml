@@ -205,6 +205,10 @@ tasks:
       type: programmatic
       module: server.graders
       function: grade_task
+    graders:
+      - type: programmatic
+        module: server.graders
+        function: grade_task
     metrics:
       diagnosis_weight: 0.3
       remediation_weight: 0.6
@@ -222,6 +226,10 @@ tasks:
       type: programmatic
       module: server.graders
       function: grade_task
+    graders:
+      - type: programmatic
+        module: server.graders
+        function: grade_task
     metrics:
       diagnosis_weight: 0.35
       remediation_weight: 0.55
@@ -239,6 +247,10 @@ tasks:
       type: programmatic
       module: server.graders
       function: grade_task
+    graders:
+      - type: programmatic
+        module: server.graders
+        function: grade_task
     metrics:
       diagnosis_weight: 0.4
       remediation_weight: 0.45
@@ -256,6 +268,10 @@ tasks:
       type: programmatic
       module: server.graders
       function: grade_task
+    graders:
+      - type: programmatic
+        module: server.graders
+        function: grade_task
     metrics:
       diagnosis_weight: 0.45
       remediation_weight: 0.40

@@ -221,6 +221,13 @@ def list_tasks() -> list[dict[str, Any]]:
                 "module": "server.graders",
                 "function": "grade_task",
             },
+            "graders": [
+                {
+                    "type": "programmatic",
+                    "module": "server.graders",
+                    "function": "grade_task",
+                }
+            ],
         }
         for task in TASKS.values()
     ]

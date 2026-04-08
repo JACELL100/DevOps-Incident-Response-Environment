@@ -134,6 +134,7 @@ class TaskInfo(BaseModel):
     description: str
     max_steps: int
     grader: dict[str, Any] | None = None
+    graders: list[dict[str, Any]] | None = None
 
 
 class TasksResponse(BaseModel):
