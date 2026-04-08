@@ -21,14 +21,18 @@ import os
 import re
 import sys
 import time
+import urllib.request
+import urllib.error
 from typing import Any, List, Optional
 
-import requests
-from dotenv import load_dotenv
 from openai import OpenAI
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not required
 
 
 # ============================================================================
@@ -156,26 +160,38 @@ Remember: You're dealing with a production system. Be methodical and verify your
 
 
 # ============================================================================
-# Environment Client (HTTP-based)
+# Environment Client (HTTP-based using stdlib)
 # ============================================================================
 
 class EnvClient:
-    """HTTP client for interacting with the environment server."""
+    """HTTP client for interacting with the environment server using stdlib."""
 
     def __init__(self, base_url: str, timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session_id: Optional[str] = None
 
+    def _request(self, method: str, path: str, data: dict = None) -> dict:
+        """Make an HTTP request using urllib."""
+        url = f"{self.base_url}{path}"
+        headers = {"Content-Type": "application/json"}
+        
+        if data is not None:
+            body = json.dumps(data).encode("utf-8")
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        else:
+            req = urllib.request.Request(url, headers=headers, method=method)
+        
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            raise RuntimeError(f"HTTP {e.code}: {error_body}")
+
     def reset(self, task_id: str) -> dict:
         """Reset the environment and start a new episode."""
-        response = requests.post(
-            f"{self.base_url}/reset",
-            json={"task_id": task_id},
-            timeout=self.timeout
-        )
-        response.raise_for_status()
-        data = response.json()
+        data = self._request("POST", "/reset", {"task_id": task_id})
         self.session_id = data["session_id"]
         return data["observation"]
 
@@ -183,44 +199,28 @@ class EnvClient:
         """Take an action in the environment."""
         if not self.session_id:
             raise RuntimeError("Must call reset() before step()")
-
-        response = requests.post(
-            f"{self.base_url}/step",
-            json={"session_id": self.session_id, "action_str": action_str},
-            timeout=self.timeout
-        )
-        response.raise_for_status()
-        return response.json()
+        return self._request("POST", "/step", {"session_id": self.session_id, "action_str": action_str})
 
     def grade(self) -> dict:
         """Get the final grade for the episode."""
         if not self.session_id:
             raise RuntimeError("Must call reset() before grade()")
-
-        response = requests.post(
-            f"{self.base_url}/grade",
-            json={"session_id": self.session_id},
-            timeout=self.timeout
-        )
-        response.raise_for_status()
-        return response.json()
+        return self._request("POST", "/grade", {"session_id": self.session_id})
 
     def get_tasks(self) -> list:
         """Get list of available tasks."""
-        response = requests.get(f"{self.base_url}/tasks", timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()["tasks"]
+        return self._request("GET", "/tasks")["tasks"]
 
     def health(self) -> bool:
         """Check if the environment is healthy."""
         try:
-            response = requests.get(f"{self.base_url}/health", timeout=self.timeout)
-            return response.status_code == 200
+            self._request("GET", "/health")
+            return True
         except Exception:
             return False
 
     def close(self) -> None:
-        """Close the HTTP client (no-op for requests)."""
+        """Close the HTTP client (no-op for urllib)."""
         pass
 
 
