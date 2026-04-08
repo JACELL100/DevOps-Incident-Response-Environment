@@ -216,6 +216,11 @@ def list_tasks() -> list[dict[str, Any]]:
             "difficulty": task.difficulty,
             "description": task.description[:200] + "...",
             "max_steps": task.max_steps,
+            "grader": {
+                "type": "programmatic",
+                "module": "server.graders",
+                "function": "grade_task",
+            },
         }
         for task in TASKS.values()
     ]

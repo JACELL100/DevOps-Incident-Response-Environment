@@ -133,6 +133,7 @@ class TaskInfo(BaseModel):
     difficulty: str
     description: str
     max_steps: int
+    grader: dict[str, Any] | None = None
 
 
 class TasksResponse(BaseModel):
