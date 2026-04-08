@@ -212,13 +212,17 @@ async def get_tasks():
 
 
 @app.post("/reset", response_model=ResetResponse)
-async def reset(request: ResetRequest):
+async def reset(request: ResetRequest = None):
     """
     Reset the environment to initial state.
 
     Creates a new session or resets an existing one.
     """
     try:
+        # Handle empty body
+        if request is None:
+            request = ResetRequest()
+        
         # Create or get session
         if request.session_id and request.session_id in session_manager.sessions:
             session_id = request.session_id
