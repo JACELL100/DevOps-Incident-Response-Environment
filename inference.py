@@ -35,9 +35,9 @@ load_dotenv()
 # Configuration
 # ============================================================================
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "")
-MODEL_NAME = os.environ.get("MODEL_NAME", "")
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "llama-3.1-8b-instant")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Environment server URL (Hugging Face Space or local)
 ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
