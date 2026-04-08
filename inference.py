@@ -23,7 +23,7 @@ import sys
 import time
 from typing import Any, List, Optional
 
-import httpx
+import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -164,14 +164,15 @@ class EnvClient:
 
     def __init__(self, base_url: str, timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(timeout=timeout)
+        self.timeout = timeout
         self.session_id: Optional[str] = None
 
     def reset(self, task_id: str) -> dict:
         """Reset the environment and start a new episode."""
-        response = self.client.post(
+        response = requests.post(
             f"{self.base_url}/reset",
-            json={"task_id": task_id}
+            json={"task_id": task_id},
+            timeout=self.timeout
         )
         response.raise_for_status()
         data = response.json()
@@ -183,9 +184,10 @@ class EnvClient:
         if not self.session_id:
             raise RuntimeError("Must call reset() before step()")
 
-        response = self.client.post(
+        response = requests.post(
             f"{self.base_url}/step",
-            json={"session_id": self.session_id, "action_str": action_str}
+            json={"session_id": self.session_id, "action_str": action_str},
+            timeout=self.timeout
         )
         response.raise_for_status()
         return response.json()
@@ -195,30 +197,31 @@ class EnvClient:
         if not self.session_id:
             raise RuntimeError("Must call reset() before grade()")
 
-        response = self.client.post(
+        response = requests.post(
             f"{self.base_url}/grade",
-            json={"session_id": self.session_id}
+            json={"session_id": self.session_id},
+            timeout=self.timeout
         )
         response.raise_for_status()
         return response.json()
 
     def get_tasks(self) -> list:
         """Get list of available tasks."""
-        response = self.client.get(f"{self.base_url}/tasks")
+        response = requests.get(f"{self.base_url}/tasks", timeout=self.timeout)
         response.raise_for_status()
         return response.json()["tasks"]
 
     def health(self) -> bool:
         """Check if the environment is healthy."""
         try:
-            response = self.client.get(f"{self.base_url}/health")
+            response = requests.get(f"{self.base_url}/health", timeout=self.timeout)
             return response.status_code == 200
         except Exception:
             return False
 
     def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
+        """Close the HTTP client (no-op for requests)."""
+        pass
 
 
 # ============================================================================
