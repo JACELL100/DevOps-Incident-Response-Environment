@@ -5,6 +5,9 @@ Baseline Inference Script for DevOps Incident Response Environment.
 This script runs an AI agent against the environment deployed on Hugging Face Spaces
 and reports performance scores using the required structured logging format.
 
+IMPORTANT: This script runs ALL available tasks (at least 3) as required by the
+OpenEnv validator. Each task is graded independently.
+
 Environment Variables (REQUIRED):
     API_BASE_URL: The API endpoint for the LLM
     MODEL_NAME: The model identifier to use
@@ -49,11 +52,14 @@ ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
 # Benchmark/Environment name
 BENCHMARK = "devops-incident-response"
 
-# Task to run (can be overridden via environment)
-TASK_NAME = os.environ.get("TASK_NAME", "task_easy_oom")
+# Tasks to run - MUST run at least 3 tasks for validator
+TASKS_TO_RUN = [
+    "task_easy_oom",
+    "task_medium_cascade",
+    "task_hard_complex",
+]
 
 # Inference parameters
-MAX_STEPS = 15  # Will be updated per task
 MAX_TOKENS = 1024
 TEMPERATURE = 0.3
 MAX_RETRIES = 3
@@ -357,37 +363,21 @@ def format_observation_dict(obs: dict) -> str:
 
 
 # ============================================================================
-# Main
+# Run Single Task
 # ============================================================================
 
-def main() -> None:
-    """Run inference on the environment."""
-    # Validate configuration
-    if not HF_TOKEN:
-        print("[ERROR] HF_TOKEN environment variable is required", flush=True)
-        sys.exit(1)
-    if not API_BASE_URL:
-        print("[ERROR] API_BASE_URL environment variable is required", flush=True)
-        sys.exit(1)
-    if not MODEL_NAME:
-        print("[ERROR] MODEL_NAME environment variable is required", flush=True)
-        sys.exit(1)
-
-    # Initialize clients
-    llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    env_client = EnvClient(ENV_URL)
-
-    # Check environment health
-    if not env_client.health():
-        print(f"[ERROR] Environment at {ENV_URL} is not healthy", flush=True)
-        sys.exit(1)
-
-    # Get tasks and find max_steps for our task
-    tasks = env_client.get_tasks()
-    task_info = next((t for t in tasks if t["id"] == TASK_NAME), None)
-    max_steps = task_info["max_steps"] if task_info else MAX_STEPS
-
-    # Initialize tracking
+def run_single_task(
+    llm_client: OpenAI,
+    env_client: EnvClient,
+    task_id: str,
+    max_steps: int
+) -> tuple[bool, int, float, List[float]]:
+    """
+    Run a single task and return results.
+    
+    Returns:
+        (success, steps_taken, score, rewards)
+    """
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
@@ -395,11 +385,11 @@ def main() -> None:
     success = False
 
     # Log start
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        # Reset environment
-        observation = env_client.reset(TASK_NAME)
+        # Reset environment for this task
+        observation = env_client.reset(task_id)
         last_reward = 0.0
 
         for step in range(1, max_steps + 1):
@@ -430,17 +420,100 @@ def main() -> None:
         # Get final grade
         grade_result = env_client.grade()
         score = grade_result.get("score", 0.0)
-        score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+        # Ensure score is strictly between 0 and 1
+        score = max(0.01, min(0.99, score))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:
-        print(f"[DEBUG] Error during inference: {e}", flush=True)
-        score = 0.0
+        print(f"[DEBUG] Error during task {task_id}: {e}", flush=True)
+        score = 0.01  # Minimum valid score on error
         success = False
 
-    finally:
-        env_client.close()
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    # Log end for this task
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    
+    return success, steps_taken, score, rewards
+
+
+# ============================================================================
+# Main
+# ============================================================================
+
+def main() -> None:
+    """Run inference on ALL required tasks (at least 3)."""
+    # Validate configuration
+    if not HF_TOKEN:
+        print("[ERROR] HF_TOKEN environment variable is required", flush=True)
+        sys.exit(1)
+    if not API_BASE_URL:
+        print("[ERROR] API_BASE_URL environment variable is required", flush=True)
+        sys.exit(1)
+    if not MODEL_NAME:
+        print("[ERROR] MODEL_NAME environment variable is required", flush=True)
+        sys.exit(1)
+
+    # Initialize clients
+    llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    env_client = EnvClient(ENV_URL)
+
+    # Check environment health
+    if not env_client.health():
+        print(f"[ERROR] Environment at {ENV_URL} is not healthy", flush=True)
+        sys.exit(1)
+
+    # Get all available tasks from the server
+    available_tasks = env_client.get_tasks()
+    task_map = {t["id"]: t for t in available_tasks}
+    
+    # Determine which tasks to run (at least 3)
+    tasks_to_run = []
+    for task_id in TASKS_TO_RUN:
+        if task_id in task_map:
+            tasks_to_run.append(task_id)
+    
+    # Fallback: if we don't have 3 tasks, add more from available
+    if len(tasks_to_run) < 3:
+        for task in available_tasks:
+            if task["id"] not in tasks_to_run:
+                tasks_to_run.append(task["id"])
+            if len(tasks_to_run) >= 3:
+                break
+    
+    print(f"[INFO] Running {len(tasks_to_run)} tasks: {tasks_to_run}", flush=True)
+    
+    # Run each task
+    all_results = []
+    for task_id in tasks_to_run:
+        task_info = task_map.get(task_id, {})
+        max_steps = task_info.get("max_steps", 15)
+        
+        print(f"\n[INFO] Starting task: {task_id} (max_steps={max_steps})", flush=True)
+        
+        success, steps, score, rewards = run_single_task(
+            llm_client, env_client, task_id, max_steps
+        )
+        
+        all_results.append({
+            "task_id": task_id,
+            "success": success,
+            "steps": steps,
+            "score": score,
+            "rewards": rewards,
+        })
+        
+        print(f"[INFO] Task {task_id} complete: score={score:.4f}, success={success}", flush=True)
+    
+    # Print summary
+    print("\n" + "=" * 60, flush=True)
+    print("[SUMMARY] All tasks completed:", flush=True)
+    avg_score = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0
+    print(f"  Tasks run: {len(all_results)}", flush=True)
+    print(f"  Average score: {avg_score:.4f}", flush=True)
+    for r in all_results:
+        print(f"  - {r['task_id']}: score={r['score']:.4f}, success={r['success']}", flush=True)
+    print("=" * 60, flush=True)
+    
+    env_client.close()
 
 
 if __name__ == "__main__":
