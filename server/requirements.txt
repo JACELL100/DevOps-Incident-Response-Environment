@@ -7,5 +7,9 @@ uvicorn[standard]>=0.22.0
 # Data validation
 pydantic>=2.0.0
 
+# API client for inference
+openai>=1.0.0
+requests>=2.28.0
+
 # Utils
 python-dotenv>=1.0.0
