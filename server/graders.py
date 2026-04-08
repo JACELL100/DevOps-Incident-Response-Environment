@@ -73,8 +73,8 @@ class TaskGrader:
             + efficiency_score * self.task.efficiency_weight
         )
 
-        # Clamp to [0.0, 1.0]
-        final_score = max(0.0, min(1.0, final_score))
+        # Clamp to (0.0, 1.0) - strictly between, not equal to boundaries
+        final_score = max(0.01, min(0.99, final_score))
 
         # Generate feedback
         feedback = self._generate_feedback(
@@ -110,7 +110,7 @@ class TaskGrader:
         queried = env.services_queried
 
         if not affected:
-            return 1.0  # No affected services = automatic pass
+            return 0.99  # No affected services = automatic pass
 
         # Calculate coverage
         covered = affected.intersection(queried)
@@ -125,7 +125,7 @@ class TaskGrader:
         if diagnostic_count > 0:
             diagnostic_bonus = min(0.1, diagnostic_count * 0.02)
 
-        return min(1.0, coverage + diagnostic_bonus)
+        return min(0.99, max(0.01, coverage + diagnostic_bonus))
 
     def _score_remediation(self, env: IncidentResponseEnv, state: EnvironmentState) -> float:
         """
@@ -139,7 +139,7 @@ class TaskGrader:
         progress = env.remediation_progress
 
         if not required:
-            return 1.0 if state.resolved else 0.5
+            return 0.99 if state.resolved else 0.5
 
         # Count completed remediation actions
         completed = sum(1 for r in progress.values() if r)
@@ -155,7 +155,7 @@ class TaskGrader:
         unnecessary_penalty = min(0.2, unnecessary_actions * 0.02)
 
         score = completion_rate * 0.6 + resolution_bonus - unnecessary_penalty
-        return max(0.0, min(1.0, score))
+        return max(0.01, min(0.99, score))
 
     def _score_efficiency(self, env: IncidentResponseEnv, state: EnvironmentState) -> float:
         """
@@ -168,18 +168,19 @@ class TaskGrader:
 
         if not state.resolved:
             # No efficiency bonus if not resolved
-            return 0.0
+            return 0.01
 
         # Linear scaling: fewer steps = higher score
         # Perfect efficiency at 30% of max steps
         # Zero efficiency at max steps
         optimal = max_steps * 0.3
         if steps_used <= optimal:
-            return 1.0
+            return 0.99
         elif steps_used >= max_steps:
-            return 0.0
+            return 0.01
         else:
-            return 1.0 - (steps_used - optimal) / (max_steps - optimal)
+            raw_score = 1.0 - (steps_used - optimal) / (max_steps - optimal)
+            return max(0.01, min(0.99, raw_score))
 
     def _generate_feedback(
         self,
